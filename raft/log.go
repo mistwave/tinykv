@@ -157,7 +157,7 @@ func (l *RaftLog) Term(i uint64) (uint64, error) {
 func (l *RaftLog) EntriesToSend(nextIndex uint64) []*pb.Entry {
 	var res []*pb.Entry
 	for i, en := range l.entries {
-		if en.Index >= nextIndex && en.Index <= l.stabled {
+		if en.Index >= nextIndex {
 			res = append(res, &l.entries[i])
 		}
 	}

@@ -194,14 +194,23 @@ func newRaft(c *Config) *Raft {
 // current commit index to the given peer. Returns true if a message was sent.
 func (r *Raft) sendAppend(to uint64) bool {
 	// Your Code Here (2A).
+	entries := r.RaftLog.EntriesToSend(r.Prs[to].Next)
+	// if no entries, send an non-data entry
+	if entries == nil {
+		entries = append(entries, &pb.Entry{
+			Term:  r.Term,
+			Index: r.RaftLog.LastIndex() + 1,
+			Data:  nil,
+		})
+	}
 	r.sendMsg(pb.Message{
 		MsgType: pb.MessageType_MsgAppend,
 		To:      to,
 		From:    r.id,
 		Term:    r.Term,
 		LogTerm: r.RaftLog.LastTerm(),
-		Index:   r.RaftLog.LastIndex(),
-		Entries: r.RaftLog.EntriesToSend(r.Prs[to].Next),
+		Index:   r.Prs[to].Next - 1,
+		Entries: entries,
 		Commit:  r.RaftLog.committed,
 	})
 	return true
@@ -289,7 +298,7 @@ func (r *Raft) becomeLeader() {
 	// send heartbeat
 	for pId, _ := range r.Prs {
 		if pId != r.id {
-			r.sendHeartbeat(pId)
+			r.sendAppend(pId)
 		}
 	}
 }
@@ -343,7 +352,6 @@ func (r *Raft) stepFollower(m pb.Message) error {
 }
 
 func (r *Raft) stepCandidate(m pb.Message) error {
-
 	switch m.MsgType {
 	case pb.MessageType_MsgHup:
 		r.startElection()
@@ -357,7 +365,6 @@ func (r *Raft) stepCandidate(m pb.Message) error {
 		} else {
 			r.rejectAppendEntries(m)
 		}
-
 	case pb.MessageType_MsgRequestVote:
 		if m.Term > r.Term {
 			r.becomeFollower(m.Term, m.From)
@@ -408,7 +415,12 @@ func (r *Raft) stepLeader(m pb.Message) error {
 			r.handleAppendEntries(m)
 		}
 	case pb.MessageType_MsgAppendResponse:
-		//todo
+		if !m.Reject {
+
+		} else {
+
+		}
+
 	case pb.MessageType_MsgRequestVote:
 		if m.Term > r.Term {
 			r.becomeFollower(m.Term, m.From)
@@ -509,12 +521,15 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 
 	t, err := r.RaftLog.Term(m.Index)
 	if err != nil {
-		//log.Error("cannot get term")
+		// log.Error("cannot get term")
 	}
 	if t == m.LogTerm {
 		for _, entry := range m.Entries {
 			// todo overwrite
-			r.RaftLog.entries = append(r.RaftLog.entries, *entry)
+			// ignore no-data entry
+			if entry.Data != nil {
+				r.RaftLog.entries = append(r.RaftLog.entries, *entry)
+			}
 		}
 
 		// advance commit
@@ -524,15 +539,13 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 			r.RaftLog.committed = m.Commit
 		}
 
+		// good response
 		r.sendMsg(pb.Message{
 			MsgType: pb.MessageType_MsgAppendResponse,
 			To:      m.From,
 			From:    r.id,
 			Term:    r.Term,
-			Commit:  r.RaftLog.committed,
-			Reject:  true,
 		})
-
 	}
 
 	// todo reject
@@ -563,8 +576,13 @@ func (r *Raft) handleHeartbeat(m pb.Message) {
 
 func (r *Raft) handlePropose(m pb.Message) {
 	for _, e := range m.Entries {
-		r.RaftLog.entries = append(r.RaftLog.entries, *e)
+		r.RaftLog.entries = append(r.RaftLog.entries, pb.Entry{
+			Term:  r.Term,
+			Index: r.RaftLog.LastIndex() + 1,
+			Data:  e.Data,
+		})
 	}
+
 	for pId := range r.Prs {
 		if pId != r.id {
 			r.sendAppend(pId)
